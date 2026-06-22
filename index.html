@@ -282,4 +282,315 @@ function loadProfiles() {
   catch (e) { return {}; }
 }
 function saveProfiles(profiles) {
+
+   var wrap = el("div", { class: "content-pad" });
+  var list = Object.keys(state.profiles).map(function (k) { return state.profiles[k]; })
+    .sort(function (a, b) { return new Date(b.createdAt) - new Date(a.createdAt); });
+
+  if (list.length > 0) {
+    var grid = el("div", { class: "profile-grid" });
+    list.forEach(function (p) {
+      var card = el("button", {
+        class: "profile-card",
+        onClick: function () {
+          state.activeId = p.id;
+          saveActiveProfileId(p.id);
+          state.screen = "lesson-list";
+          render();
+        }
+      }, [
+        el("div", { class: "profile-avatar" }, "👤"),
+        el("div", { class: "profile-card-info" }, [
+          el("span", { class: "profile-card-name" }, p.name),
+          el("span", { class: "profile-card-meta" }, "कक्षा " + p.classLevel + " · " + (p.lessonsCompleted || 0) + " पाठ पूर्ण")
+        ]),
+        el("span", { class: "profile-card-arrow" }, "›")
+      ]);
+      grid.appendChild(card);
+    });
+    wrap.appendChild(grid);
+  }
+
+  var nameInput = el("input", { class: "text-input", placeholder: "छात्र का नाम (Student Name)", type: "text" });
+  var classSelect = el("select", { class: "class-select" });
+  CLASS_LIST.forEach(function (c) {
+    var opt = el("option", { value: c }, c + (c === 8 ? " — विज्ञान उपलब्ध" : " (सामग्री निर्माणाधीन)"));
+    if (c === 8) opt.selected = true;
+    classSelect.appendChild(opt);
+  });
+
+  var startBtn = el("button", { class: "primary-btn", disabled: "true" }, "प्रारम्भ करें · Start ›");
+  function updateBtn() { startBtn.disabled = nameInput.value.trim().length === 0; }
+  nameInput.addEventListener("input", updateBtn);
+  startBtn.addEventListener("click", function () {
+    var name = nameInput.value.trim();
+    if (!name) return;
+    var classLevel = Number(classSelect.value);
+    var p = newProfile(name, classLevel);
+    var next = Object.assign({}, state.profiles);
+    next[p.id] = p;
+    persist(next);
+    state.activeId = p.id;
+    saveActiveProfileId(p.id);
+    state.screen = "lesson-list";
+    render();
+  });
+
+  var newBox = el("div", { class: "new-profile-box" }, [
+    el("h3", { class: "section-label" }, "+ नया छात्र | New Student"),
+    nameInput,
+    el("div", { class: "class-select-row" }, [
+      el("label", { class: "class-select-label" }, "कक्षा (Class):"),
+      classSelect
+    ]),
+    startBtn
+  ]);
+  wrap.appendChild(newBox);
+  return wrap;
+}
+
+function renderLessonList() {
+  var wrap = el("div", { class: "content-pad" });
+  var p = getActiveProfile();
+  wrap.appendChild(renderStatsBar(p));
+
+  var isClass8 = p && p.classLevel === 8;
+  if (!isClass8) {
+    wrap.appendChild(el("div", { class: "notice-box" }, [
+      el("span", null, "कक्षा " + (p ? p.classLevel : "") + " की सामग्री निर्माणाधीन है। अभी कक्षा 8 विज्ञान का नमूना देखें — गुरु शीघ्र विस्तृत होगा।")
+    ]));
+  }
+
+  wrap.appendChild(el("div", { class: "chapter-banner" }, [
+    el("span", { class: "chapter-eyebrow" }, CURRICULUM.subject.sa + " · " + CURRICULUM.subject.hi + " · " + CURRICULUM.subject.en),
+    el("h2", { class: "chapter-title" }, CURRICULUM.chapter.sa),
+    el("span", { class: "chapter-sub" }, CURRICULUM.chapter.hi + " · " + CURRICULUM.chapter.en)
+  ]));
+
+  var list = el("div", { class: "lesson-list" });
+  CURRICULUM.lessons.forEach(function (lesson, idx) {
+    var prog = p && p.progress ? p.progress[lesson.id] : null;
+    var rightEl;
+    if (prog && prog.completed) {
+      rightEl = el("span", { class: "lesson-badge done" }, "✓ " + prog.score + "/" + prog.total);
+    } else {
+      rightEl = el("span", { class: "lesson-row-arrow" }, "›");
+    }
+    var row = el("button", {
+      class: "lesson-row",
+      onClick: function () {
+        state.activeLessonIdx = idx;
+        state.quizAnswers = {};
+        state.quizSubmitted = false;
+        state.screen = "lesson";
+        render();
+      }
+    }, [
+      el("span", { class: "lesson-num" }, String(idx + 1)),
+      el("div", { class: "lesson-row-text" }, [
+        el("span", { class: "lesson-row-title" }, lesson.title.sa),
+        el("span", { class: "lesson-row-sub" }, lesson.title.hi + " · " + lesson.title.en)
+      ]),
+      rightEl
+    ]);
+    list.appendChild(row);
+  });
+  wrap.appendChild(list);
+
+  if (state.saveError) {
+    wrap.appendChild(el("p", { class: "save-warning" }, "⚠ प्रगति सहेजने में समस्या हुई। पुनः प्रयास करें।"));
+  }
+  return wrap;
+}
+
+function renderLangBlock(tag, color, text) {
+  var block = el("div", { class: "lang-block", style: "border-left-color:" + color }, [
+    el("span", { class: "lang-tag", style: "color:" + color }, tag),
+    el("p", null, text)
+  ]);
+  return block;
+}
+
+function renderGlossary(rows) {
+  var wrap = el("div", { class: "glossary-wrap" });
+  wrap.appendChild(el("div", { class: "glossary-head" }, [
+    el("span", null, "संस्कृत"), el("span", null, "हिन्दी"), el("span", null, "English"), el("span", null, "बंजारा")
+  ]));
+  rows.forEach(function (r) {
+    wrap.appendChild(el("div", { class: "glossary-row" }, [
+      el("span", null, r.sa), el("span", null, r.hi), el("span", { class: "latin-text" }, r.en), el("span", null, r.bn)
+    ]));
+  });
+  return wrap;
+}
+
+function renderLesson() {
+  var wrap = el("div", { class: "content-pad" });
+  var lesson = CURRICULUM.lessons[state.activeLessonIdx];
+  var p = getActiveProfile();
+
+  wrap.appendChild(el("div", { class: "lesson-head" }, [
+    el("span", { class: "lesson-head-eyebrow" }, "पाठ " + (state.activeLessonIdx + 1) + " / " + CURRICULUM.lessons.length),
+    el("h2", { class: "lesson-head-title" }, lesson.title.sa)
+  ]));
+
+  wrap.appendChild(el("div", { class: "sutra-box" }, [
+    el("span", { class: "sutra-label" }, "सूत्रम् · Sutra"),
+    el("p", { class: "sutra-text" }, lesson.sutra.text),
+    el("p", { class: "sutra-translit" }, lesson.sutra.translit)
+  ]));
+
+  var bridge = el("div", { class: "bridge-stack" }, [
+    renderLangBlock("संस्कृतम्", "#D4A24C", lesson.content.sa),
+    renderLangBlock("हिन्दी", "#C2542D", lesson.content.hi),
+    renderLangBlock("English", "#5C7A4B", lesson.content.en),
+    renderLangBlock("गोरमाटी बोली (बंजारा)", "#7A4F9E", lesson.content.bn)
+  ]);
+  wrap.appendChild(bridge);
+
+  wrap.appendChild(el("h3", { class: "section-label" }, "चतुर्भाषा-कोशः · Glossary"));
+  wrap.appendChild(renderGlossary(lesson.glossary));
+
+  wrap.appendChild(el("div", { class: "tanda-box" }, [
+    el("span", { class: "tanda-label" }, "🛖 तांडा-उदाहरणम् · Tanda Example"),
+    el("p", { class: "tanda-text" }, lesson.tandaExample.sa),
+    el("p", { class: "tanda-text-sub" }, lesson.tandaExample.hi),
+    el("p", { class: "tanda-text-sub" }, lesson.tandaExample.en),
+    el("p", { class: "tanda-text-sub bn" }, lesson.tandaExample.bn)
+  ]));
+
+  if (lesson.formula) {
+    wrap.appendChild(el("div", { class: "formula-box" }, [
+      el("span", { class: "formula-sa" }, lesson.formula.sa),
+      el("span", { class: "formula-en" }, lesson.formula.en)
+    ]));
+  }
+
+  var quizSection = el("div", { class: "quiz-section" }, [el("h3", { class: "section-label" }, "Quiz")]);
+
+  lesson.quiz.forEach(function (q, qi) {
+    var qBox = el("div", { class: "quiz-q" }, [
+      el("p", { class: "quiz-q-text" }, q.q.sa),
+      el("p", { class: "quiz-q-text-sub" }, q.q.hi + " · " + q.q.en + " · " + q.q.bn)
+    ]);
+    var optsWrap = el("div", { class: "quiz-options" });
+    q.options.forEach(function (opt, oi) {
+      var selected = state.quizAnswers[qi] === oi;
+      var isCorrect = oi === q.correct;
+      var cls = "quiz-option";
+      if (state.quizSubmitted) {
+        if (isCorrect) cls += " correct";
+        else if (selected) cls += " incorrect";
+      } else if (selected) {
+        cls += " selected";
+      }
+      var children = [
+        el("span", null, opt.sa),
+        el("span", { class: "quiz-option-sub" }, opt.hi + " · " + opt.en + " · " + opt.bn)
+      ];
+      if (state.quizSubmitted && isCorrect) children.push(el("span", { class: "quiz-icon" }, "✓"));
+      if (state.quizSubmitted && selected && !isCorrect) children.push(el("span", { class: "quiz-icon" }, "✗"));
+
+      var btn = el("button", {
+        class: cls,
+        disabled: state.quizSubmitted ? "true" : null,
+        onClick: function () {
+          if (state.quizSubmitted) return;
+          state.quizAnswers[qi] = oi;
+          render();
+        }
+      }, children);
+      if (state.quizSubmitted) btn.disabled = true;
+      optsWrap.appendChild(btn);
+    });
+    qBox.appendChild(optsWrap);
+    quizSection.appendChild(qBox);
+  });
+
+  var answeredCount = Object.keys(state.quizAnswers).length;
+  if (!state.quizSubmitted) {
+    var checkBtn = el("button", {
+      class: "primary-btn",
+      disabled: answeredCount < lesson.quiz.length ? "true" : null,
+      onClick: function () {
+        var correct = 0;
+        lesson.quiz.forEach(function (q, i) { if (state.quizAnswers[i] === q.correct) correct++; });
+        state.quizSubmitted = true;
+
+        if (p) {
+          var lessonProgress = { completed: true, score: correct, total: lesson.quiz.length, lastSeen: new Date().toISOString() };
+          var wasCompleted = !!(p.progress && p.progress[lesson.id] && p.progress[lesson.id].completed);
+          var updated = Object.assign({}, p);
+          updated.progress = Object.assign({}, p.progress);
+          updated.progress[lesson.id] = lessonProgress;
+          updated.lessonsCompleted = wasCompleted ? (p.lessonsCompleted || 0) : (p.lessonsCompleted || 0) + 1;
+          updated.totalScore = (p.totalScore || 0) + correct;
+          updated.totalAttempted = (p.totalAttempted || 0) + lesson.quiz.length;
+          var next = Object.assign({}, state.profiles);
+          next[p.id] = updated;
+          persist(next);
+        }
+        render();
+      }
+    }, "उत्तर जाँचें · Check Answers");
+    if (answeredCount < lesson.quiz.length) checkBtn.disabled = true;
+    quizSection.appendChild(checkBtn);
+  } else {
+    var correctCount = 0;
+    lesson.quiz.forEach(function (q, i) { if (state.quizAnswers[i] === q.correct) correctCount++; });
+    var resultBox = el("div", { class: "quiz-result-box" }, [
+      el("p", null, [
+        "स्कोर · Score: ",
+        el("strong", null, correctCount + " / " + lesson.quiz.length)
+      ])
+    ]);
+    if (state.activeLessonIdx < CURRICULUM.lessons.length - 1) {
+      resultBox.appendChild(el("button", {
+        class: "primary-btn",
+        onClick: function () {
+          state.activeLessonIdx += 1;
+          state.quizAnswers = {};
+          state.quizSubmitted = false;
+          render();
+        }
+      }, "अगला पाठ · Next Lesson ›"));
+    } else {
+      resultBox.appendChild(el("button", {
+        class: "primary-btn",
+        onClick: function () { state.screen = "lesson-list"; render(); }
+      }, "अध्याय पूर्ण · Chapter Complete ✓"));
+    }
+    resultBox.appendChild(el("button", {
+      class: "secondary-btn",
+      onClick: function () { state.screen = "lesson-list"; render(); }
+    }, "पाठ-सूची · Lesson List"));
+    quizSection.appendChild(resultBox);
+  }
+
+  wrap.appendChild(quizSection);
+
+  if (state.saveError) {
+    wrap.appendChild(el("p", { class: "save-warning" }, "⚠ प्रगति सहेजने में समस्या हुई। पुनः प्रयास करें।"));
+  }
+  return wrap;
+}
+
+// ---------- boot ----------
+function boot() {
+  state.profiles = loadProfiles();
+  var aid = loadActiveProfileId();
+  if (aid && state.profiles[aid]) {
+    state.activeId = aid;
+    state.screen = "lesson-list";
+  } else {
+    state.screen = "profile-select";
+  }
+  render();
+}
+
+boot();
+</script>
+</body>
+</html>
   try { localStorage.setItem(STORAGE_KEY_PROFILES, JSON.stringify(
+   
